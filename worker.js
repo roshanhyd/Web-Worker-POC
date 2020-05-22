@@ -11,7 +11,7 @@
  * CACHE API, a separate GET request is created to store responses.
  */
 
-const CACHE_NAME = "spmTrackerCache";
+var CACHE_NAME = "spmTrackerCache";
 const CACHE_PAGE_LIMIT = 500;
 
 let isSynced = false;
@@ -39,7 +39,8 @@ const flattenObject = (object, counter = 0) => {
     }
 
     if (typeof object[key] === "object") {
-      acc = {...acc ,...flattenObject(object[key], ++counter)
+      acc = {
+        ...acc, ...flattenObject(object[key], ++counter)
       };
     } else {
       let affix = counter ? counter : "";
@@ -67,13 +68,14 @@ const flattenObject = (object, counter = 0) => {
  * @returns {Request}
  */
 const createRequest = (url, type, body = {}) => {
-	//console.log(body);
+  //console.log(body);
   let request = {
     url,
     options: {
       method: type,
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "Cache-Control": "private"
       }
     }
   };
@@ -82,22 +84,22 @@ const createRequest = (url, type, body = {}) => {
     let queryBody = "";
 
     for (let property in body) {
-    	
-        if (typeof body[property] === "object") {
-			if (property === 'sort') {
-				
-			}
-          queryBody += objectToParamsString(flattenObject(body[property]));
-        } else {
-          queryBody += `&${property}=${body[property]}`;
+
+      if (typeof body[property] === "object") {
+        if (property === 'sort') {
+
         }
+        queryBody += objectToParamsString(flattenObject(body[property]));
+      } else {
+        queryBody += `&${property}=${body[property]}`;
       }
+    }
 
-   let params = new URLSearchParams(queryBody.slice(1));
+    let params = new URLSearchParams(queryBody.slice(1));
 
-   request.url += `?${params.toString()}`;
-  } 
- 
+    request.url += `?${params.toString()}`;
+  }
+
 
   return new Request(request.url, request.options);
 };
@@ -108,26 +110,21 @@ const createRequest = (url, type, body = {}) => {
  * @returns {JSON}
  */
 const pullData = async (eventData) => {
-	console.log(eventData);
-    const { url, ...restOfData} = eventData;
-    const cacheRequest = createRequest(url, "GET", restOfData);
-   const networkRequest = createRequest(url, "POST", restOfData);
-    const cache = await caches.open(CACHE_NAME);
+  console.log(eventData);
+  const { url, ...restOfData } = eventData;
+  const cacheRequest = createRequest(url, "GET", restOfData);
+  const networkRequest = createRequest(url, "POST", restOfData);
+  const cache = await caches.open(CACHE_NAME);
 
-    let response = await fetch(cacheRequest);
+  response = await fetch(cacheRequest);
 
-   if (!response) {
-      response = await fetch(cacheRequest);
+  let cacheResponse = response.clone();
 
-     let cacheResponse = response.clone();
-
-    if (restOfData.page <= CACHE_PAGE_LIMIT) {
-       cache.put(cacheRequest, cacheResponse);
-    }
-   }
-
-     return response.json();
-  };
+  if (restOfData.page <= CACHE_PAGE_LIMIT) {
+    cache.put(cacheRequest, cacheResponse);
+  }
+  return response.json();
+};
 
 
 /**
@@ -135,9 +132,9 @@ const pullData = async (eventData) => {
  * @param {Request} request - GET request.
  * @param {Response} response - Response object.
  */
-  const updateCache = async (request, response) => {
+const updateCache = async (request, response) => {
   try {
-    const { url, method, ...resOfRequest} = request;
+    const { url, method, ...resOfRequest } = request;
     const cache = await caches.open(CACHE_NAME);
 
     const cacheRequest =
@@ -180,7 +177,7 @@ const clearCache = async () => {
 
     return Promise.all(
       cacheKeys.map(cacheKey => {
-        if (cacheKey === CACHE_NAME) return caches.delete(cacheKey);
+        if (cacheKey === (CACHE_NAME)) return caches.delete(cacheKey);
       })
     );
   } catch (error) {
@@ -248,52 +245,50 @@ const compare = (object1, object2) => {
  */
 onmessage = async (event) => {
 
-//    if (!isCacheAvailable) {
-//      console.log("Your browser doesn't support the cache API.");
-//      return;
-//    }
-    const { url, page, pageSize, sort, filter } = event.data;
-	let eventData = { url, page, pageSize};
-	
-    if (sort){
-		sortFilterProps.sort = sort;
-		console.log('Reloading pages...')
-	}
-    if (filter) {
-		sortFilterProps.filter = filter;
-		console.log('Reloading pages...')
-	}
+  if (!isCacheAvailable) {
+    console.log("Your browser doesn't support the cache API.");
+    return;
+  }
+  const { url, page, pageSize, sort, filter } = event.data;
+  let eventData = { url, page, pageSize };
+  if (sort) {
+    sortFilterProps.sort = sort;
+  }
+  if (filter) {
+    sortFilterProps.filter = filter;
+  }
 
-    eventData = {...eventData};
+  eventData = { ...eventData };
 
-   if (!compare(prevSortFilterProps, sortFilterProps)) {
-      prevSortFilterProps = deepClone(sortFilterProps);
-      isCacheCleared = false;
-     isSynced = false;
-   }
-    if (!isCacheCleared) {
-     await clearCache();
-     isCacheCleared = true;
+  if (!compare(prevSortFilterProps, sortFilterProps)) {
+    prevSortFilterProps = deepClone(sortFilterProps);
+    isCacheCleared = false;
+    isSynced = false;
+  }
+  if (!isCacheCleared) {
+    await clearCache();
+    isCacheCleared = true;
+  }
+
+  let data = await (pullData(eventData));
+
+  if (!isSynced) {
+    // last page loading issue and can't read rowCount from undefined type -> resolved here
+    let pageCount = data ? Math.ceil(data.rowCount / pageSize) : 0;
+
+    if (isNaN(pageCount)) {
+      throw new Error("Error determining number of pages. pageCount isNaN.");
     }
 
-    let data = await (pullData(eventData));
-
-    if (!isSynced) {
-      let pageCount = data.length / pageSize;
-
-      if (isNaN(pageCount)) {
-        throw new Error("Error determining number of pages. pageCount isNaN.");
-      }
-
-      if (pageCount > CACHE_PAGE_LIMIT) {
-        pageCount = CACHE_PAGE_LIMIT;
-      }
-
-      isSynced = true;
-
-      backgroundSync(eventData, { end: pageCount });
+    if (pageCount > CACHE_PAGE_LIMIT) {
+      pageCount = CACHE_PAGE_LIMIT;
     }
 
-    postMessage(data);
-  
+    isSynced = true;
+
+    backgroundSync(eventData, { end: pageCount });
+  }
+
+  postMessage(data);
+
 };
